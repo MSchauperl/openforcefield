@@ -7,6 +7,8 @@
 """
 environment.py
 
+.. warning :: This file is  will be updated to comply with PEP8.
+
 Classes defining a chemical environment for atoms and how they are connected
 using networkx graph objects to organize and make changes to the structure.
 Output will be in the form of SMARTS and SMIRKS.
@@ -19,18 +21,30 @@ and David Mobley, UC Irvine.
 
 """
 
-# QUESTION: should we ditch camelCase and go with PEP8 standard snake_case?
+__all__ = [
+    'SMIRKSMismatchError',
+    'SMIRKSParsingError',
+    'ChemicalEnvironment',
+    'AtomChemicalEnvironment',
+    'BondChemicalEnvironment',
+    'AngleChemicalEnvironment',
+    'TorsionChemicalEnvironment',
+    'ImproperChemicalEnvironment'
+]
+
 
 #==============================================================================
 # GLOBAL IMPORTS
 #==============================================================================
 
-import networkx as nx
 import re
 import copy
 
-import numpy as np
+import networkx as nx
 from numpy import random
+
+import openforcefield.utils
+
 
 #==============================================================================
 # Functions
@@ -82,11 +96,11 @@ def _convert_embedded_SMIRKS(smirks):
     a_out = 0
     while smirks.find('$(') != -1:
         # Find first atom
-        atom, a_in, a_out = _find_embedded_brackets(smirks, '\[', '\]')
+        atom, a_in, a_out = _find_embedded_brackets(smirks, r'\[', r'\]')
         d = atom.find('$(')
         # Find atom with the $ string embedded
         while d == -1:
-            atom, temp_in, temp_out = _find_embedded_brackets(smirks[a_out+1:], '\[', '\]')
+            atom, temp_in, temp_out = _find_embedded_brackets(smirks[a_out+1:], r'\[', r'\]')
             a_in = a_out + temp_in + 1
             a_out += temp_out + 1
             d = atom.find('$(')
@@ -104,11 +118,11 @@ def _convert_embedded_SMIRKS(smirks):
         else:
             ring_out = ''
 
-        embedded, p_in, p_out = _find_embedded_brackets(atom, '\(', '\)')
+        embedded, p_in, p_out = _find_embedded_brackets(atom, r'\(', r'\)')
         # two forms of embedded strings $(*~stuff) or $([..]~stuff)
         # in the latter case the first atom refers the current atom
         if embedded[1] == '[':
-            first, f_in, f_out = _find_embedded_brackets(embedded, '\[','\]')
+            first, f_in, f_out = _find_embedded_brackets(embedded, r'\[', r'\]')
             first = _convert_embedded_SMIRKS(first)
             new_atom = atom[:d]+first[1:-1]+atom[p_out+1:]
             embedded = embedded[f_out+1:]
@@ -155,27 +169,28 @@ def _remove_blanks_repeats(init_list, remove_list = ['']):
     return list( set(final_list) )
 
 
-class SMIRKSMismatchError(Exception):
+class SMIRKSMismatchError(openforcefield.utils.MessageException):
     """
     Exception for cases where smirks are inappropriate
     for the environment type they are being parsed into
     """
-    def __init__(self, msg):
-        super(SMIRKSMismatchError, self).__init__(self,msg)
-        self.msg = msg
+    pass
 
-class SMIRKSParsingError(Exception):
+
+class SMIRKSParsingError(openforcefield.utils.MessageException):
     """
     Exception for when SMIRKS are not parseable for any environment
     """
-    def __init__(self, msg):
-        super(SMIRKSParsingError, self).__init__(self, msg)
-        self.msg = msg
+    pass
 
-class ChemicalEnvironment(object):
+
+class ChemicalEnvironment:
     """Chemical environment abstract base class that matches an atom, bond, angle, etc.
+
+    .. warning :: This class is largely redundant with the same one in the Chemper package, and will likely be removed.
+
     """
-    class Atom(object):
+    class Atom:
         """Atom representation, which may have some ORtypes and ANDtypes properties.
 
         Attributes
@@ -265,12 +280,12 @@ class ChemicalEnvironment(object):
             smirks = self.asSMARTS()
 
             # No index specified so SMIRKS = SMARTS
-            if self.index == None:
+            if self.index is None:
                 return smirks
 
             # Add label to the end of SMARTS
             else:
-                sub_string, start, end = _find_embedded_brackets(smirks, '\[','\]')
+                sub_string, start, end = _find_embedded_brackets(smirks, r'\[', r'\]')
                 if self.ring is not None:
                     return sub_string[:-1] + ':' + str(self.index) + ']'+str(self.ring)
                 else:
@@ -281,7 +296,7 @@ class ChemicalEnvironment(object):
             Adds ORtype to the set for this atom.
 
             Parameters
-            --------
+            ----------
             ORbase: string, such as '#6'
             ORdecorators: list of strings, such as ['X4','+0']
             """
@@ -293,7 +308,7 @@ class ChemicalEnvironment(object):
             Adds ANDtype to the set for this atom.
 
             Parameters
-            --------
+            ----------
             ANDtype: string
                 added to the list of ANDtypes for this atom
             """
@@ -376,7 +391,7 @@ class ChemicalEnvironment(object):
             """Return the atom representation as SMARTS.
 
             Returns
-            --------
+            -------
             smarts : str
                 The SMARTS string for just this atom
             """
@@ -396,7 +411,7 @@ class ChemicalEnvironment(object):
         def asSMIRKS(self):
             """
             Returns
-            --------
+            -------
             smarts : str
                 The SMIRKS string for just this bond
             """
@@ -421,6 +436,27 @@ class ChemicalEnvironment(object):
             orderList = [orderDict[base] for (base, decor) in self.ORtypes]
             return min(orderList)
 
+    @staticmethod
+    def validate(smirks, ensure_valence_type=None, toolkit='openeye'):
+        """Validate the provided SMIRKS string is valid, and if requested, tags atoms appropriate to the specified valence type.
+
+        Parameters
+        ----------
+        smirks : str
+            The SMIRKS expression to validate
+        ensure_valence_type : str, optional, default=None
+            If specified, ensure the tagged atoms are appropriate to the specified valence type
+
+        This method will raise a :class:`SMIRKSParsingError` if the provided SMIRKS string is not valid.
+
+        """
+        chemenv = ChemicalEnvironment(smirks, toolkit=toolkit)
+
+        if ensure_valence_type:
+            valence_type = chemenv.getType()
+            if valence_type != ensure_valence_type:
+                raise SMIRKSParsingError("Tagged atoms in SMARTS string '%s' specifies valence type '%s', expected '%s'." % (smirks, valence_type, ensure_valence_type))
+
     def __init__(self, smirks = None, label = None, replacements = None, toolkit='openeye'):
         """Initialize a chemical environment abstract base class.
 
@@ -433,39 +469,33 @@ class ChemicalEnvironment(object):
         replacements = list of lists, optional,
             [substitution, smarts] form for parsing SMIRKS
         """
-        if toolkit.lower() == 'openeye':
-            try:
-                from openeye import oechem
-                self.toolkit = 'openeye'
-            except:
-                raise Exception("Could not import openeye.oechem")
-        elif toolkit.lower() == 'rdkit':
-            try:
-                from rdkit import Chem
-                self.toolkit = 'rdkit'
-            except:
-                raise Exception("Could not import rdkit.Chem")
+        # TODO: Refactor all this class to use the ToolkitRegistry API.
+        if toolkit.lower() == 'openeye' and openforcefield.utils.OpenEyeToolkitWrapper.is_available():
+            self.toolkit = 'openeye'
+        elif toolkit.lower() == 'rdkit' and openforcefield.utils.RDKitToolkitWrapper.is_available():
+            self.toolkit = 'rdkit'
         else:
-            raise Exception("Toolkit %s was not recognized, please use openeye or rdkit" % toolkit)
+            raise ValueError("Could not find toolkit {}, please use/install "
+                             "openeye or rdkit.".format(toolkit))
 
         # Define the regular expressions used for all SMIRKS decorators
         # There are a limited number of descriptors for smirks string they are:
         # That is a # followed by one or more ints w/or w/o at ! in front '!#16'
-        element_num = "!?[#]\d+"
+        element_num = r"!?[#]\d+"
         # covers element symbols, i.e. N,C,O,Br not followed by a number
         element_sym = "!?[A-Z][a-z]?"
         # covers element symbols that are aromatic:
         aro_sym = "!?[cnops]"
         # replacement strings
-        replace_str = "\$\w+"
+        replace_str = r"\$\w+"
         # a or A w/ or w/o a ! in front 'A'
         aro_ali = "!?[aA]"
         # the decorators (D,H,j,r,V,X,^) followed by one or more integers
-        needs_int = "!?[DHjrVX^]\d+"
+        needs_int = r"!?[DHjrVX^]\d+"
         # R(x), +, - do not need to be followed by a integer w/ or w/o a ! 'R2'
-        optional_int = "!?[Rx+-]\d*"
+        optional_int = r"!?[Rx+-]\d*"
         # chirality options, "@", "@@", "@int" w/ or w/o a ! in front
-        chirality = "!?[@]\d+|!?[@]@?"
+        chirality = r"!?[@]\d+|!?[@]@?"
 
         # Generate RegEx string for decorators:
         self.no_bracket_atom_reg = r'('+'|'.join([element_sym, aro_sym, replace_str])+')'
@@ -553,7 +583,7 @@ into ChemicalEnvironments." % smirks)
         """
         return self._graph.get_edge_data(node1, node2)
 
-    def isValid(self, smirks = None):
+    def isValid(self, smirks=None):
         """
         Returns if the environment is valid, that is if it
         creates a parseable SMIRKS string.
@@ -598,7 +628,7 @@ into ChemicalEnvironments." % smirks)
         store = list() # to store indices while branching
         bondingTo = idx # which atom are we going to bond to
 
-        atom_string, start, end = _find_embedded_brackets(smirks, '\[', '\]')
+        atom_string, start, end = _find_embedded_brackets(smirks, r'\[', r'\]')
 
         if start != 0: # first atom is not in square brackets
             if start != -1:
@@ -650,7 +680,7 @@ into ChemicalEnvironments." % smirks)
                 continue
 
             # find beginning and end of next [atom]
-            atom_string, start, end = _find_embedded_brackets(leftover, '\[', '\]')
+            atom_string, start, end = _find_embedded_brackets(leftover, r'\[', r'\]')
 
             if start != -1: # no more square brackets
                 bond_string = leftover[:start]
@@ -791,7 +821,7 @@ into ChemicalEnvironments." % smirks)
         """Return a SMIRKS representation of the chemical environment.
 
         Parameters
-        -----------
+        ----------
         initalAtom = optional, atom object
             This is randomly selected if not chosen.
         neighbors = optional, list of atom objects
@@ -805,7 +835,7 @@ into ChemicalEnvironments." % smirks)
         if len(self._graph_nodes()) == 0:
             return ""
 
-        if initialAtom == None:
+        if initialAtom is None:
             initialAtom = self.getAtoms()[0]
 
         if neighbors is None:
@@ -862,11 +892,14 @@ into ChemicalEnvironments." % smirks)
         a single Atom object fitting the description
         or None if no such atom exists
         """
-        if descriptor == None:
+        if descriptor is None:
             return random.choice(self._graph_nodes())
 
-        try: descriptor = int(descriptor)
-        except: descriptor = descriptor
+        # TODO: Is there a better way to do this?
+        try:
+            descriptor = int(descriptor)
+        except:
+            pass
 
         if type(descriptor) is int:
             for atom in self.getAtoms():
@@ -885,7 +918,7 @@ into ChemicalEnvironments." % smirks)
         Returns a list of atoms or bonds matching the descriptor
 
         Parameters
-        -----------
+        ----------
         component_type: string: 'atom' or 'bond'
         descriptor: string, optional
             'all', 'Indexed', 'Unindexed', 'Alpha', 'Beta'
@@ -941,12 +974,15 @@ into ChemicalEnvironments." % smirks)
             'Beta' - returns a random beta bond
 
         Returns
-        --------
+        -------
         a single Bond object fitting the description
         or None if no such atom exists
         """
-        try: descriptor = int(descriptor)
-        except: descriptor = descriptor
+        # TODO: Is there a better way to do this?
+        try:
+            descriptor = int(descriptor)
+        except:
+            pass
 
         if type(descriptor) is int:
             for bond in self.getBonds():
@@ -986,11 +1022,11 @@ into ChemicalEnvironments." % smirks)
         --------
         newAtom: atom object for the newly created atom
         """
-        if bondToAtom == None:
+        if bondToAtom is None:
             if len(self._graph_nodes()) > 0:
                 return None
             newType = newAtomIndex
-            if newType == None:
+            if newType is None:
                 newType = 0
 
             newAtom = self.Atom(newORtypes, newANDtypes, newAtomIndex, newAtomRing)
@@ -1084,7 +1120,7 @@ into ChemicalEnvironments." % smirks)
         --------
         a complete list of bonds in the fragment
         """
-        if atom == None:
+        if atom is None:
             edge_list = self._graph_edges(data=True)
             bonds = [data['bond'] for a1, a2, data in edge_list]
         else:
@@ -1212,7 +1248,7 @@ into ChemicalEnvironments." % smirks)
         returns True if the atom or bond is not indexed
         """
         if component._atom:
-            return component.index == None
+            return component.index is None
         else:
             return component._bond_type < 1
 
@@ -1384,7 +1420,7 @@ class BondChemicalEnvironment(AtomChemicalEnvironment):
 
         # Add initial atom
         self.atom2 = self.selectAtom(2)
-        if self.atom2 == None:
+        if self.atom2 is None:
             raise Exception("Error: Bonds need 2 indexed atoms, there were not enough in %s" % smirks)
 
         self.bond2 = self._graph_get_edge_data(self.atom1, self.atom2)['bond']
@@ -1469,4 +1505,4 @@ class ImproperChemicalEnvironment(AngleChemicalEnvironment):
         self.bond3 = self._graph_get_edge_data(self.atom2, self.atom4)['bond']
 
     def _checkType(self):
-        return (self.getType() == 'ImproperTorsion'), 'ImproperTorsion'
+        return (self.getType() == 'Improper'), 'Improper'
